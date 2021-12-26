@@ -7,31 +7,11 @@
 
 import SwiftUI
 
-class FocusStateCheckFilter: ObservableObject {
-    @Published var focusModes: [FocusMode] = []
-
-    init(focusModes: [FocusMode]) {
-        self.focusModes = focusModes
-    }
-
-    init() { }
-}
-
-struct FocusMode {
-    var focusName: String
-    var focusId: String
-    var isChecked: Bool
-    init(focusName: String, focusId: String, isChecked: Bool) {
-        self.focusName = focusName
-        self.focusId = focusId
-        self.isChecked = isChecked
-    }
-}
-
 var currentSelectedFocus: String? = nil
 
 struct ContentView: View {
     @ObservedObject private var focusModesCheckStatus: FocusStateCheckFilter = .init()
+    let jsonDecoder = JSONDecoder()
 
     init() {
         let modes = fetchAllFocusStates()
@@ -67,16 +47,11 @@ struct ContentView: View {
     }
 
     func fetchAllFocusStates() -> [FocusMode] {
-        let currentState = try? FileManager.default.url(
-            for: .allLibrariesDirectory,
-               in: .userDomainMask,
-               appropriateFor: nil,
-               create: false
-        )
-        let dndPath = currentState?.appendingPathComponent("DoNotDisturb/DB/")
-        let modes = dndPath?.appendingPathComponent("ModeConfigurations.json")
-        let focusModesDictionary =  (try? JSONDecoder().decode(ModeConfig.self, from: Data(contentsOf: modes!)))?.data.first?.modeConfigurations ?? [:]
-
+        guard let modeConfigurationsUrl = FilePaths.modeConfigurations.filePath,
+              let modeConfiguration = try? jsonDecoder.decode(ModeConfig.self, from: Data(contentsOf: modeConfigurationsUrl)),
+              let focusModesDictionary = modeConfiguration.data.first?.modeConfigurations
+        else { return [] }
+        
         var focusModes: [FocusMode] = []
         for (key, value) in focusModesDictionary {
             focusModes.append(.init(focusName: value.mode.name,
@@ -93,38 +68,26 @@ struct ContentView: View {
     }
 
     func readAndSetIfNecessary() {
-        let currentState = try? FileManager.default.url(
-            for: .allLibrariesDirectory,
-               in: .userDomainMask,
-               appropriateFor: nil,
-               create: false
-        )
-        let dndPath = currentState?.appendingPathComponent("DoNotDisturb/DB/")
-        let assertions = dndPath?.appendingPathComponent("Assertions.json")
-        let modes = dndPath?.appendingPathComponent("ModeConfigurations.json")
-
-        let activeID = (try? JSONDecoder().decode(AssertionModel.self, from: Data(contentsOf: assertions!)))?.data.first?.storeAssertionRecords.first?.assertionDetails.assertionDetailsModeIdentifier
-        let activeName = (try? JSONDecoder().decode(ModeConfig.self, from: Data(contentsOf: modes!)))?.data.first?.modeConfigurations[activeID ?? ""]?.mode.name
-
-        if activeName == nil && currentSelectedFocus == nil {
-            return
-        }
-
-        if activeName == nil && currentSelectedFocus != nil {
-            //setStatus(status: "")
+        guard let modeConfigurationsUrl = FilePaths.modeConfigurations.filePath,
+              let assertionsUrl = FilePaths.assertions.filePath,
+              let modeConfiguration = try? jsonDecoder.decode(ModeConfig.self, from: Data(contentsOf: modeConfigurationsUrl)),
+              let assertions = try? jsonDecoder.decode(AssertionModel.self, from: Data(contentsOf: assertionsUrl)),
+              let focusModesDictionary = modeConfiguration.data.first?.modeConfigurations,
+              let activeFocusId = assertions.data.first?.storeAssertionRecords.first?.assertionDetails.assertionDetailsModeIdentifier,
+              let activeFocusName = focusModesDictionary[activeFocusId]?.mode.name
+        else {
             currentSelectedFocus = nil
             return
         }
 
-        if activeName == currentSelectedFocus {
+        if activeFocusName == currentSelectedFocus {
             return
         }
 
-        currentSelectedFocus = activeName
-
+        currentSelectedFocus = activeFocusName
         let selectedFocusModes = focusModesCheckStatus.focusModes.filter(\.isChecked)
 
-        if let mode = selectedFocusModes.first(where: { $0.focusName == activeName }) {
+        if let mode = selectedFocusModes.first(where: { $0.focusName == activeFocusName }) {
             setStatus(status: mode.focusName)
         }
     }
@@ -171,39 +134,5 @@ tell application "Slack"
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()
-    }
-}
-
-// MARK: - AssertionModel
-struct AssertionModel: Codable {
-    let data: [Assertion]
-
-    struct Assertion: Codable {
-        let storeAssertionRecords: [StoreAssertionRecord]
-    }
-
-    struct StoreAssertionRecord: Codable {
-        let assertionDetails: StoreAssertionRecordAssertionDetails
-    }
-
-    struct StoreAssertionRecordAssertionDetails: Codable {
-        let assertionDetailsModeIdentifier: String
-    }
-}
-
-// MARK: - ModeConfig
-struct ModeConfig: Codable {
-    let data: [Config]
-
-    struct Config: Codable {
-        let modeConfigurations: [String : COMApple]
-    }
-
-    struct COMApple: Codable {
-        let mode: Mode
-    }
-
-    struct Mode: Codable {
-        let name: String
     }
 }
